@@ -1,49 +1,49 @@
-import { useState } from "react";
+import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import MapView, { Marker } from "react-native-maps";
+import { TarjetaEstacionDetalle } from "../../components/tarjeta-estacion-detalle";
+import { coloresEstado } from "../../constants/estaciones";
+import {
+  fetchDetallesEstacion,
+  fetchObtenerEstaciones,
+} from "../../services/estacionesApi";
 
-// Datos de ejemplo para los lugares, en la app real estos datos vendrían de la API.
-const lugares = [
-  {
-    id: "1",
-    lat: -34.9011,
-    lng: -56.1645,
-    titulo: "Montevideo",
-    estado: "Operativa",
-  },
-  {
-    id: "2",
-    lat: -34.878,
-    lng: -56.0755,
-    titulo: "Pocitos",
-    estado: "Alerta",
-  },
-  {
-    id: "3",
-    lat: -34.309466,
-    lng: -55.960309,
-    titulo: "Casa Thiago",
-    estado: "Fuera de servicio",
-  },
-  {
-    id: "4",
-    lat: -30.948706,
-    lng: -57.520326,
-    titulo: "Termas Arapey",
-    estado: "Mantenimiento",
-  },
-];
-
-//Mapeo de los colores por estado de la estación
-const coloresEstado = {
-  Operativa: "#00CC00",
-  Alerta: "#FFCC00",
-  "Fuera de servicio": "#CC0000",
-  Mantenimiento: "#808080",
-};
+function PuntoEstacion({ estado }) {
+  const color = coloresEstado[estado] || "#808080";
+  return (
+    <View style={[styles.anilloMedio, { backgroundColor: `${color}55` }]}>
+      <View style={[styles.puntoCentral, { backgroundColor: color }]} />
+    </View>
+  );
+}
 
 export default function MapsScreen() {
-  const [estacionSeleccionada, setEstacionSeleccionada] = useState(null);
+  const [estaciones, setEstaciones] = useState(null);
+  const [detallesEstacionSelecionada, setDetallesEstacionSelecionada] =
+    useState(null);
+  const [cargando, setCargando] = useState(false);
+
+  const bottomSheetRef = useRef(null);
+  const snapPoints = useMemo(() => ["40%"], []);
+
+  //cada 5 segundos, se actualizan las estaciones con su estado general
+  useEffect(() => {
+    const intervalo = setInterval(() => {
+      fetchObtenerEstaciones().then(setEstaciones);
+    }, 5000); // cada 5 segundos
+
+    return () => clearInterval(intervalo); // limpieza al desmontar
+  }, []);
+
+  // abre o cierra el bottom sheet según haya (o no) una estación seleccionada
+  useEffect(() => {
+    if (cargando || detallesEstacionSelecionada) {
+      bottomSheetRef.current?.expand();
+    } else {
+      bottomSheetRef.current?.close();
+    }
+  }, [cargando, detallesEstacionSelecionada]);
 
   return (
     <View style={styles.container}>
@@ -56,52 +56,50 @@ export default function MapsScreen() {
           longitudeDelta: 7.0,
         }}
       >
-        {lugares.map((lugar) => (
+        {estaciones?.map((lugar) => (
           <Marker
             key={lugar.id}
-            coordinate={{
-              latitude: lugar.lat,
-              longitude: lugar.lng,
-            }}
+            coordinate={{ latitude: lugar.lat, longitude: lugar.lng }}
             title={lugar.titulo}
             description={lugar.estado}
-            anchor={{ x: 0.25, y: 0.25 }}
-            onPress={() => setEstacionSeleccionada(lugar)}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={false}
+            onPress={() => {
+              setCargando(true);
+              setDetallesEstacionSelecionada(null);
+              fetchDetallesEstacion(lugar.id).then((data) => {
+                setDetallesEstacionSelecionada(data);
+                setCargando(false);
+              });
+            }}
           >
-            <View
-              style={[
-                styles.marcador,
-                {
-                  backgroundColor: coloresEstado[lugar.estado] || "#000000",
-                },
-              ]}
-            >
-              <View style={styles.marcadorInterior} />
-            </View>
+            <PuntoEstacion estado={lugar.estado} />
           </Marker>
         ))}
       </MapView>
 
-      {estacionSeleccionada && (
-        <View style={styles.card}>
-          <Text style={styles.titulo}>{estacionSeleccionada.titulo}</Text>
+      <BottomSheet
+        ref={bottomSheetRef}
+        index={-1}
+        snapPoints={snapPoints}
+        enablePanDownToClose
+        onClose={() => setDetallesEstacionSelecionada(null)}
+      >
+        <BottomSheetView style={styles.contenidoSheet}>
+          {cargando && <Text style={styles.titulo}>Cargando detalles...</Text>}
 
-          <Text
-            style={{
-              color: coloresEstado[estacionSeleccionada.estado],
-              fontWeight: "600",
-            }}
-          >
-            {estacionSeleccionada.estado}
-          </Text>
-
-          <View style={{ height: 15 }} />
-
-          <Text>Latencia: 12 ms</Text>
-          <Text>Satélites: 18</Text>
-          <Text>Disponibilidad: 99.8%</Text>
-        </View>
-      )}
+          {!cargando && detallesEstacionSelecionada && (
+            <TarjetaEstacionDetalle
+              nombreEstacion={detallesEstacionSelecionada.nombreEstacion}
+              estado={detallesEstacionSelecionada.estado}
+              latencia={detallesEstacionSelecionada.latencia}
+              satelites={detallesEstacionSelecionada.satelites}
+              disponibilidad={detallesEstacionSelecionada.disponibilidad}
+              estadoTexto={detallesEstacionSelecionada.estadoTexto}
+            />
+          )}
+        </BottomSheetView>
+      </BottomSheet>
     </View>
   );
 }
@@ -110,52 +108,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-
   map: {
     ...StyleSheet.absoluteFillObject,
   },
-
-  marcador: {
+  anilloMedio: {
     width: 28,
     height: 28,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+  },
+  puntoCentral: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 2,
-    borderColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
-    elevation: 3,
+    borderColor: "#ffffff",
   },
-
-  marcadorInterior: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: "#fff",
-    backgroundColor: "transparent",
+  contenidoSheet: {
+    flex: 1,
   },
-
-  card: {
-    position: "absolute",
-    left: 15,
-    right: 15,
-    bottom: 25,
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    padding: 18,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-
   titulo: {
     fontSize: 22,
     fontWeight: "700",
     marginBottom: 6,
+    paddingHorizontal: 18,
   },
 });
